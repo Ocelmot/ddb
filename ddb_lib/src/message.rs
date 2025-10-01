@@ -62,14 +62,14 @@ impl Message {
     pub fn verify(from: Id, challenge: String) -> Message {
         Message {
             from,
-            msg_type: MessageType::Verify(challenge),
+            msg_type: MessageType::Verify(challenge, [0; 16]),
         }
     }
 
-    pub fn verified(from: Id, challenge: String) -> Message {
+    pub fn verified(from: Id, challenge: String, can_be_neighbor: bool) -> Message {
         Message {
             from,
-            msg_type: MessageType::Verified(challenge),
+            msg_type: MessageType::Verified(challenge, can_be_neighbor),
         }
     }
 
@@ -101,15 +101,34 @@ impl Message {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum MessageType {
-    Verify(String),   // Challenge
-    Verified(String), // Response
+    /// Before a message can be sent, a node should respond to a Verify challenge.
+    /// This is to ensure that messages are sent to valid, active nodes.
+    /// 
+    /// First String is the challenge
+    /// Second array of u8s is padding
+    Verify(String, [u8; 16]),
+
+    /// Response to a Verify challenge
+    /// 
+    /// String is the returned challenge.
+    /// bool is if this node should be considered a neighbor of the other node
+    Verified(String, bool),
+
+    /// Request the values for some key
     Get {
         key: String,
         count: usize,
     },
+
+    /// The returned entries for a Get request
     Values(Vec<Entry>),
+
+    /// Set the entry in the data
     Set(Entry),
+
+    /// Attempt to connect to the following address
     Link(String),
+
     /// Neighbors represents a partial list of neighbors known to the sending node.
     /// Neighbors uses a push strategy to propagate node's addrs through out the network.
     Neighbors(Vec<String>),

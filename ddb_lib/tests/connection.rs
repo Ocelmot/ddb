@@ -19,11 +19,11 @@ mod tests {
         sender.request_verification(send_id.clone(), listen_addr);
         let (_v_addr, v_msg) = listener.listen().expect("verification should be received");
 
-        let MessageType::Verify(challenge) = v_msg.msg_type() else {
+        let MessageType::Verify(challenge, _padding) = v_msg.msg_type() else {
             panic!("Incorrect message type received")
         };
 
-        sender.verified(challenge);
+        sender.verified(challenge, true);
 
 
 		// send test message

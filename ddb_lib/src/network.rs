@@ -4,7 +4,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rand::{distr::{Alphabetic, SampleString}, rng, seq::IndexedRandom};
+use rand::{
+    distr::{Alphabetic, SampleString},
+    rng,
+    seq::{IndexedRandom, SliceRandom},
+};
 
 use crate::{Id, message::Message};
 
@@ -13,11 +17,17 @@ const CHALLENGE_TIMEOUT: Duration = Duration::from_secs(16);
 const PENDING_TIMEOUT: Duration = CHALLENGE_TIMEOUT;
 const REBROADCAST_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Number of connections to try to have
+///
+/// More connections will be made to meet this target
+const TARGET_CONNECTIONS: usize = 10;
+
 pub struct Network {
     id: Id,
     sock: UdpSocket,
     // keep list of verified addrs (verified addrs have replied with their key to prevent reflection attacks)
-    addrs: HashMap<SocketAddr, Instant>,
+    // bool is if this addr is considered a neighbor
+    verified_addrs: HashMap<SocketAddr, (Instant, bool)>,
     challenges: HashMap<String, SocketAddr>,
     pending: HashMap<SocketAddr, Vec<(Message, Instant)>>,
     recent_broadcasts: HashMap<Message, Instant>,
@@ -28,7 +38,7 @@ impl Network {
         Some(Self {
             id,
             sock: UdpSocket::bind(addrs).ok()?,
-            addrs: HashMap::new(),
+            verified_addrs: HashMap::new(),
             challenges: HashMap::new(),
             pending: HashMap::new(),
             recent_broadcasts: HashMap::new(),
@@ -61,7 +71,7 @@ impl Network {
     }
     pub fn send_addr<A: Into<SocketAddr>>(&mut self, addr: A, msg: Message) -> bool {
         let addr = addr.into();
-        let sent = send_addr(&self.sock, &mut self.addrs, addr, &msg);
+        let sent = send_addr(&self.sock, &mut self.verified_addrs, addr, &msg);
         if !sent {
             self.request_verification(self.id, addr);
             self.add_pending(addr.into(), msg);
@@ -78,14 +88,22 @@ impl Network {
         }
 
         let neighbors: Vec<_> = self
-            .addrs
+            .verified_addrs
             .iter()
-            .map(|(sockaddr, _timeout)| sockaddr)
+            .filter_map(
+                |(sockaddr, (_verification_time, is_neighbor))| {
+                    if *is_neighbor { Some(sockaddr) } else { None }
+                },
+            )
             .collect();
+        println!("sending several to {:?}", neighbors);
         let mut rng = rng();
-        let recipients: Vec<_> = neighbors.choose_multiple(&mut rng, 10).map(|addr| (*addr).clone()).collect();
+        let recipients: Vec<_> = neighbors
+            .choose_multiple(&mut rng, 10)
+            .map(|addr| (*addr).clone())
+            .collect();
         for recipient in recipients {
-            send_addr(&self.sock, &mut self.addrs, recipient, &msg);
+            send_addr(&self.sock, &mut self.verified_addrs, recipient, &msg);
         }
         self.recent_broadcasts.insert(msg, Instant::now());
     }
@@ -100,19 +118,28 @@ impl Network {
         let _ = self.sock.send_to(&data.serialize(), addr);
     }
 
+    pub fn challenge_exists(&self, challenge: &String) -> bool {
+        self.challenges.contains_key(challenge)
+    }
+
     /// This node has received a verify challenge and must return it.
-    pub fn verify(&self, addr: &SocketAddr, challenge: String){
-        let _ = self.sock.send_to(&Message::verified(self.id, challenge).serialize(), addr);
+    pub fn verify(&self, addr: &SocketAddr, challenge: String) {
+        let _ = self.sock.send_to(
+            &Message::verified(self.id, challenge, true).serialize(),
+            addr,
+        );
     }
 
     /// Another node as returned our challenge and we can now send the messages to them
-    pub fn verified(&mut self, challenge: &String) {
+    pub fn verified(&mut self, challenge: &String, is_neighbor: bool) {
         if let Some(addr) = self.challenges.remove(challenge) {
-            self.addrs.insert(addr.into(), Instant::now());
+            self.verified_addrs
+                .insert(addr.into(), (Instant::now(), is_neighbor));
+
             // send pending
             if let Some(pending) = self.pending.remove(&addr) {
                 for (msg, _sent_time) in pending {
-                    send_addr(&self.sock, &mut self.addrs, addr, &msg);
+                    send_addr(&self.sock, &mut self.verified_addrs, addr, &msg);
                 }
             }
         }
@@ -125,23 +152,24 @@ impl Network {
 
     pub fn clean(&mut self) {
         // clean addrs
-        self.addrs
-            .retain(|_, v| (*v + VERIFICATION_TIMEOUT) >= Instant::now());
+        self.verified_addrs
+            .retain(|_, (verification_time, _is_neighbor)| {
+                (*verification_time + VERIFICATION_TIMEOUT) >= Instant::now()
+            });
 
-        
-        
         // Clean Challenges (Need to store time challenge was issued)
         // self.challenges.retain(|x, y|);
 
         // Clean recent broadcasts
-        self.recent_broadcasts.retain(|_, sent_time| *sent_time + REBROADCAST_TIMEOUT > Instant::now());
+        self.recent_broadcasts
+            .retain(|_, sent_time| *sent_time + REBROADCAST_TIMEOUT > Instant::now());
 
         // clean pending
         self.pending.retain(|addr, messages| {
-            if self.addrs.contains_key(addr) {
+            if self.verified_addrs.contains_key(addr) {
                 // send messages, remove
                 for (msg, _timeout) in messages {
-                    send_addr(&self.sock, &mut self.addrs, *addr, msg);
+                    send_addr(&self.sock, &mut self.verified_addrs, *addr, msg);
                 }
                 false
             } else {
@@ -155,22 +183,50 @@ impl Network {
     /// Sends a list of neighbors to some of its neighbors
     pub fn swap_neighbors(&mut self) {
         let neighbors: Vec<_> = self
-            .addrs
+            .verified_addrs
             .iter()
-            .map(|(sockaddr, _timeout)| sockaddr)
+            .filter_map(
+                |(sockaddr, (_verification_time, is_neighbor))| {
+                    if *is_neighbor { Some(sockaddr) } else { None }
+                },
+            )
             .collect();
 
         let mut rng = rng();
-        let selected: Vec<_> = neighbors.choose_multiple(&mut rng, 10).map(|addr|addr.to_string()).collect();
-        
-        
+        let selected: Vec<_> = neighbors
+            .choose_multiple(&mut rng, 10)
+            .map(|addr| addr.to_string())
+            .collect();
+
+        println!("selected neighbors {:?}", selected);
         self.send_several(Message::neighbors(self.id, selected.clone()));
+    }
+
+    /// Initializes connections to other nodes if needed
+    pub fn swapped_neighbors(&mut self, mut neighbors: Vec<String>) {
+        neighbors.shuffle(&mut rng());
+        let connection_deficit = TARGET_CONNECTIONS - self.verified_addrs.len();
+        // filter list to parsable, yet unconnected addrs
+        let addrs = neighbors
+            .iter()
+            .filter_map(|new_neighbor| {
+                let mut addrs = new_neighbor.to_socket_addrs().ok()?;
+                addrs
+                    .next()
+                    .filter(|addr| !self.verified_addrs.contains_key(&addr))
+            })
+            .take(connection_deficit)
+            .collect::<Vec<_>>();
+
+        for addr in addrs {
+            self.request_verification(self.id, addr);
+        }
     }
 }
 
 fn send_addr<A: Into<SocketAddr>>(
     sock: &UdpSocket,
-    verified_addrs: &mut HashMap<SocketAddr, Instant>,
+    verified_addrs: &mut HashMap<SocketAddr, (Instant, bool)>,
     addr: A,
     msg: &Message,
 ) -> bool {
@@ -180,8 +236,8 @@ fn send_addr<A: Into<SocketAddr>>(
     let entry = verified_addrs.entry(addr);
     let verified = match &entry {
         Entry::Occupied(occupied_entry) => {
-            let created = occupied_entry.get();
-            if (*created + VERIFICATION_TIMEOUT) < Instant::now() {
+            let (verification_time, _is_neighbor) = occupied_entry.get();
+            if (*verification_time + VERIFICATION_TIMEOUT) < Instant::now() {
                 false
             } else {
                 true

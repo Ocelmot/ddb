@@ -135,8 +135,8 @@ fn main() -> Result<(), io::Error> {
             recv(net_rx.as_ref().unwrap_or(&never())) -> res => {
                 let Ok((_addr, msg)) = res else {continue;};
                 match msg.take_msg_type() {
-                    ddb_lib::MessageType::Verify(challenge) => {sock.as_ref().unwrap().send(Message::verified(Id::generate(), challenge).serialize().as_slice());},
-                    ddb_lib::MessageType::Verified(_challenge) => {},// explorer never requests verification
+                    ddb_lib::MessageType::Verify(challenge, _pad) => {sock.as_ref().unwrap().send(Message::verified(Id::generate(), challenge, false).serialize().as_slice());},
+                    ddb_lib::MessageType::Verified(_challenge, _is_neighbor) => {},// explorer never requests verification
                     ddb_lib::MessageType::Get { key: _, count: _ } => {}, // Explorer should not be asked this
                     ddb_lib::MessageType::Values(items) => {
                         for entry in items {

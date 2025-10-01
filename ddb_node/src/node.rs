@@ -47,13 +47,16 @@ impl Node {
         // do some processing
         let msg_id = msg.from().clone();
         match msg.take_msg_type() {
-            ddb_lib::MessageType::Verify(challenge) => {
+            ddb_lib::MessageType::Verify(challenge, _padding) => {
                 // another node wants to contact us, reply with challenge
-                self.network.verify(&from, challenge);
+                // if the challenge is in our list of challenges, do not reply
+                if !self.network.challenge_exists(&challenge) {
+                    self.network.verify(&from, challenge);
+                }
             }
-            ddb_lib::MessageType::Verified(challenge) => {
+            ddb_lib::MessageType::Verified(challenge, is_neighbor) => {
                 // our challenge has succeeded
-                self.network.verified(&challenge);
+                self.network.verified(&challenge, is_neighbor);
             }
             ddb_lib::MessageType::Get { key, count } => {
                 let entries = self.data.get(&key, count);
@@ -99,8 +102,12 @@ impl Node {
                     }
                 }
             }
-            ddb_lib::MessageType::Neighbors(neighbors) => {
-                // TODO: try to connect to some of the neighbors
+            ddb_lib::MessageType::Neighbors(mut neighbors) => {
+                // also include the sender as a potential neighbor.
+                // Although this is the most needed when there are exactly two nodes.
+                // Also I would rather convert the neighbors to sock addrs here, but....
+                neighbors.push(from.to_string());
+                self.network.swapped_neighbors(neighbors);
             }
             ddb_lib::MessageType::Trust(id, delta) => {
                 if self.identification.is_us(&msg_id) {
