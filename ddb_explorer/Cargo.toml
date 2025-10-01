@@ -1,0 +1,10 @@
+[package]
+name = "ddb_explorer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+crossbeam = "0.8.4"
+crossterm = "0.29.0"
+ddb_lib = { path = "../ddb_lib" }
+tui = "0.19.0"

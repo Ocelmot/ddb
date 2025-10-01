@@ -1,0 +1,3 @@
+[workspace]
+resolver = "3"
+members = ["ddb_explorer", "ddb_lib", "ddb_node"]
