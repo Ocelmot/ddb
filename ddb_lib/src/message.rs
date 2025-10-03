@@ -86,11 +86,17 @@ impl Message {
             msg_type: MessageType::Neighbors(addrs),
         }
     }
+    pub fn get_trust(from: Id) -> Message {
+        Message {
+            from,
+            msg_type: MessageType::GetTrust,
+        }
+    }
 
     pub fn trust(from: Id, target_id: Id, delta: i16) -> Message {
         Message {
             from,
-            msg_type: MessageType::Trust(target_id, delta),
+            msg_type: MessageType::Trust{of: target_id, delta},
         }
     }
 
@@ -133,6 +139,9 @@ pub enum MessageType {
     /// Neighbors uses a push strategy to propagate node's addrs through out the network.
     Neighbors(Vec<String>),
 
+    /// Request trust information from this node
+    GetTrust,
+
     /// Change the node's trust in an Id by the given number of ten thousandths
-    Trust(Id, i16),
+    Trust{of: Id, delta: i16},
 }

@@ -78,8 +78,12 @@ impl Network {
         }
         sent
     }
-
+    
     pub fn send_several(&mut self, msg: Message) {
+        self.send_n(msg, 10);
+    }
+
+    pub fn send_n(&mut self, msg: Message, n: usize) {
         // if same message has been sent recently, do not repeat
         if let Some(timeout) = self.recent_broadcasts.get(&msg) {
             if *timeout + REBROADCAST_TIMEOUT < Instant::now() {
@@ -99,7 +103,7 @@ impl Network {
         println!("sending several to {:?}", neighbors);
         let mut rng = rng();
         let recipients: Vec<_> = neighbors
-            .choose_multiple(&mut rng, 10)
+            .choose_multiple(&mut rng, n)
             .map(|addr| (*addr).clone())
             .collect();
         for recipient in recipients {

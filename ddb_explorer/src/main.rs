@@ -16,7 +16,7 @@ use ui::UiMessage;
 use crate::ui::ui_thread;
 
 fn main() -> Result<(), io::Error> {
-    enable_raw_mode();
+    enable_raw_mode()?;
 
     let (ui_in_tx, ui_in_rx) = channel::bounded(10);
     let (ui_out_tx, ui_out_rx) = channel::bounded(10);
@@ -146,7 +146,8 @@ fn main() -> Result<(), io::Error> {
                     ddb_lib::MessageType::Set(_entry) => {}, // Explorer does not store items
                     ddb_lib::MessageType::Link(_addr) => {}, // Explorer does not link anywhere else
                     ddb_lib::MessageType::Neighbors(_neighbors) => {}, // Explorer has no neighbors except the node it connects to.
-                    ddb_lib::MessageType::Trust(_id, _delta) => {}, // Explorer does not hold any trust tables
+                    ddb_lib::MessageType::GetTrust => {}, // Explorer only trusts the one it is connected to
+                    ddb_lib::MessageType::Trust{of, delta } => {}, // Explorer does not hold any trust tables
                 }
                 // new message from the network
                 // should process it
@@ -156,7 +157,7 @@ fn main() -> Result<(), io::Error> {
 
     eprintln!("main loop exited");
 
-    let _ = disable_raw_mode();
+    disable_raw_mode()?;
     Ok(())
 }
 

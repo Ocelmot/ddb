@@ -46,6 +46,9 @@ impl Node {
         println!("Got message {:?}", msg);
         // do some processing
         let msg_id = msg.from().clone();
+        if self.identification.is_distrusted(&msg_id){
+            return;
+        }
         match msg.take_msg_type() {
             ddb_lib::MessageType::Verify(challenge, _padding) => {
                 // another node wants to contact us, reply with challenge
@@ -109,9 +112,18 @@ impl Node {
                 neighbors.push(from.to_string());
                 self.network.swapped_neighbors(neighbors);
             }
-            ddb_lib::MessageType::Trust(id, delta) => {
+            ddb_lib::MessageType::GetTrust => {
+                // get all trust levels, return them
+                for (id, level) in self.identification.base_trust() {
+                    self.network.send_addr(from, Message::trust(self.id, *id, (*level*10_000.0)as i16));
+                }
+            }
+            ddb_lib::MessageType::Trust{of, delta: amount} => {
                 if self.identification.is_us(&msg_id) {
-                    self.identification.change_trust(id, delta as f32 / 10000.0);
+                    self.identification.change_trust(of, amount as f32 / 10000.0);
+                }else{
+                    // entries to be used for the trust offset
+                    self.identification.adjust_offset(msg_id, of, amount as f32 / 10000.0);
                 }
             }
         };
@@ -126,5 +138,8 @@ impl Node {
 
         // prepare a list of neighbors to send
         self.network.swap_neighbors();
+
+        // Request some trust levels
+        self.network.send_n(Message::get_trust(self.id), 1);
     }
 }
